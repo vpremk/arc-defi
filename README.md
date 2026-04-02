@@ -2,15 +2,6 @@
 
 This project implements a DeFi-style trade workflow on Circle ARC Testnet, mirroring the Solidity smart contracts in `CollateralizedTrade.sol` (ERC-20) and `CollateralizedTradeERC8183.sol` (ERC-721 for NFTs).
 
-```
-(circle) vamsi@Mac Arch-DeFi-Sample % python deploy_contract.py
-Deploying from account: 0xaA6Ed569148c006514cb4520Ba8Dbd24052da6dc
-Account balance: 20 ETH
-Contract deployed at: 0xe185f2E0ebf96638bfCe09FC6b77d36d17FCC32c
-Transaction hash: 49a98381225d63a060d4d02b168a6588b8d596160316fd57ccfe595910efe554
-(circle) vamsi@Mac Arch-DeFi-Sample % 
-```
-
 ## Trade Lifecycle Diagram
 
 ```mermaid
@@ -94,8 +85,8 @@ On-chain, the smart contract *is* the CCP. `approve()` + `fund()` lock collatera
 
 | | Traditional | On-Chain |
 |---|---|---|
-| Execution → Clearing | ~24 hours (T+0 to T+1) | Seconds |
-| Clearing → DVP Settlement | ~24 hours (T+1 to T+2) | Seconds |
+| Execution → Clearing | ≈24 hours (T+0 to T+1) | Seconds |
+| Clearing → DVP Settlement | ≈24 hours (T+1 to T+2) | Seconds |
 | **Total (execution to settlement)** | **1–2 business days** | **Minutes** |
 
 The clearing-to-settlement gap is eliminated entirely. Every step from order matching (Step 5) through final DVP (Step 10) executes sequentially on-chain within a single session, with per-transaction finality.
@@ -143,7 +134,21 @@ The clearing-to-settlement gap is eliminated entirely. Every step from order mat
 
 DTCC is disintermediated entirely — the smart contract enforces the same novation and collateral-locking guarantees that the CCP provides, but without the overnight batch cycle or clearing fund contribution.
 
-At BlackRock's reported ~$500B/day in equity trading volume, even routing **0.01%** of that through on-chain settlement would yield **~$1.3M/day** in capital cost savings from the settlement window alone.
+At BlackRock's reported ≈$500B/day in equity trading volume, even routing **0.01%** of that through on-chain settlement would yield **≈$1.3M/day** in capital cost savings from the settlement window alone.
+
+### Risks in today's capital market ecosystem
+
+The cost savings above are real, but so are the adoption barriers. These are the live risks that any institution faces when moving post-trade infrastructure on-chain today, alongside how Circle and ARC directly address each one.
+
+| # | Risk | Core issue in today's market | How Circle / ARC mitigates it |
+|---|---|---|---|
+| 1 | **Loss of multilateral netting** | NSCC reduces gross settlement volumes by ~95% daily by netting offsetting obligations across all participants. On-chain gross settlement means 10 trades of 1M TSLA still require 10 full $250M settlements — not one net — potentially reversing the capital savings at scale. | Circle's programmable wallet infrastructure on ARC can implement a **netting smart contract layer**: multiple bilateral trades are aggregated intra-day and a single net settlement transaction is submitted, replicating NSCC-style netting without the overnight batch cycle. |
+| 2 | **Legal finality ≠ blockchain finality** | UCC Article 8 and registered clearing agency rules govern legal settlement finality in the US. A smart contract `complete()` has no standing under these rules today — on-chain state says "settled" while courts may not. | Circle actively engages with US and EU regulators (NYDFS, SEC, MiCA framework) on regulatory recognition of on-chain settlement. ARC is designed as a **compliant institutional chain**; Circle's legal team supports clients in structuring transactions that align on-chain finality with UCC Article 12 (enacted 2023) which explicitly recognises controllable electronic records as property. |
+| 3 | **KYC/AML and accredited investor compliance** | Traditional settlement passes through FINRA-registered broker-dealers who perform KYC, AML screening, and suitability checks. Wallet addresses carry none of this context natively. | Circle's **Developer-Controlled Wallets API enforces identity verification at wallet provisioning** — wallets are issued only to entities that pass Circle's compliance layer. Circle holds money transmitter licences in 49 US states and an EU e-money licence, making the wallet layer itself a regulated touchpoint rather than an anonymous address. |
+| 4 | **No erroneous trade / bust-trade mechanism** | FINRA Rule 11890 and exchange clearly-erroneous trade policies allow post-execution cancellation. An on-chain `complete()` is irreversible — no circuit breaker or regulatory halt can override a settled transaction. | The `admin` role in ARC's smart contracts (visible in `NFT_ABI` in this repo) provides a Circle-governed **emergency intervention key**. On ARC's permissioned validator set, Circle and institutional co-validators can coordinate a time-locked dispute window — analogous to a T+0 bust-trade window — before a transaction achieves full legal finality. |
+| 5 | **Stablecoin peg risk** | A temporary USDC depeg during Steps 7–10 means the buyer delivers $250M nominal USDC worth less in USD at DVP. Traditional settlement uses central bank money (Fedwire) with no peg risk. Tokenised equities add issuer redemption risk on top. | USDC is Circle's own product — **fully reserved 1:1 by cash and short-dated US Treasuries**, attested monthly by Deloitte, and has maintained its peg since launch. On ARC, USDC is the **native settlement currency** with no bridge or wrapping risk. Circle's reserve transparency and regulatory standing are the closest analogue to central bank money available in the tokenised asset ecosystem today. |
+| 6 | **MEV and front-running** | A pending `createJob()` or `fund()` on a public mempool reveals trade direction, size, and price before confirmation. Validators and searchers can front-run or sandwich the transaction, repricing the trade against the initiating party. | ARC operates a **permissioned validator set** of institutional participants — not anonymous miners or public stakers. Transactions are submitted through Circle's private RPC endpoint, bypassing any public mempool entirely. Block production is controlled, making MEV extraction structurally impossible without explicit collusion among the whitelisted validators. |
+| 7 | **Custody and key management** | SEC Rule 15c3-3 and the Investment Advisers Act impose strict custody requirements. Loss or compromise of the Circle entity secret results in permanent asset loss — no SIPC protection, no legal recourse equivalent to a qualified custodian. | Circle's Developer-Controlled Wallets use **MPC (Multi-Party Computation)** key management backed by HSMs (Hardware Security Modules), distributing key shards so that no single point of compromise is sufficient. Circle is a licensed money transmitter and is pursuing a US federal bank charter, positioning it as a **qualified custodian** under SEC rules — giving institutional clients the regulatory custody coverage required by the Investment Advisers Act. |
 
 ## Features
 
