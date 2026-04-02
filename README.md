@@ -11,6 +11,66 @@ Transaction hash: 49a98381225d63a060d4d02b168a6588b8d596160316fd57ccfe595910efe5
 (circle) vamsi@Mac Arch-DeFi-Sample % 
 ```
 
+## Trade Lifecycle Diagram
+
+```mermaid
+sequenceDiagram
+    participant C as Client Wallet<br/>(Buy-Side Firm)
+    participant P as Provider Wallet<br/>(Sell-Side Firm)
+    participant AC as AgenticCommerce<br/>Contract (ERC-8183)
+    participant NFT as NFT Contract<br/>(ERC-721 Collateral)
+
+    Note over C,P: Step 1–2: Setup
+    C->>C: Create wallets (Circle API)<br/>Fund via faucet
+
+    Note over C,P: Step 3–4: Bootstrap
+    C->>P: Transfer 1 USDC starter balance
+    C->>C: Check balances
+    P->>P: Check balances
+
+    Note over C,AC: Step 5: Order Matching
+    C->>AC: createJob(provider, evaluator, expiry, desc, hook)
+    AC-->>C: JobCreated event → jobId<br/>Status: Open
+
+    Note over P,AC: Step 6: Contract Value
+    P->>AC: setBudget(jobId, 5 USDC, 0x)
+    AC-->>P: Budget set<br/>Status: Open
+
+    Note over C,AC: Step 7–8: Clearing / Margin
+    C->>AC: approve(AgenticCommerce, 5 USDC) on USDC
+    C->>AC: fund(jobId, 0x)
+    AC-->>C: USDC locked in escrow<br/>Status: Funded
+
+    Note over P,AC: Step 9: Delivery Obligation
+    P->>AC: submit(jobId, deliverableHash, 0x)
+    AC-->>P: Hash stored on-chain<br/>Status: Submitted
+
+    Note over C,AC: Step 10: Final Settlement (DVP)
+    C->>AC: complete(jobId, reasonHash, 0x)
+    AC-->>P: USDC released to Provider<br/>Status: Completed
+
+    Note over C,AC: Step 11–12: Reconciliation
+    C->>AC: getJob(jobId) — read final state
+    C->>C: Check final USDC balance
+    P->>P: Check final USDC balance
+
+    rect rgb(235, 220, 245)
+        Note over C,NFT: ERC-721 NFT Collateral Operations (separate helpers)
+        C->>NFT: approve(NFT_CONTRACT, margin) on USDC
+        C->>NFT: createTrade(buyer, seller, assetId, price, margin)
+        NFT-->>C: Trade struct created, executed=false
+
+        C->>NFT: adjustMargin(tradeId, additionalMargin)
+        NFT-->>C: marginPosted increased
+
+        C->>NFT: substituteCollateral(tradeId, newToken, amount)
+        NFT-->>C: Collateral token swapped
+
+        C->>NFT: executeTrade(tradeId)
+        NFT-->>C: NFT → Buyer, USDC → Seller<br/>executed=true
+    end
+```
+
 ## Features
 
 - Trade execution (buyer & seller agreement)
