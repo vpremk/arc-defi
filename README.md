@@ -71,6 +71,35 @@ sequenceDiagram
     end
 ```
 
+## Settlement Comparison: Traditional vs On-Chain
+
+Each step in this workflow maps directly to a stage in traditional capital markets post-trade processing — but compressed from days to minutes.
+
+| Traditional Stage | Typical Timing | On-Chain Equivalent | Step(s) |
+|---|---|---|---|
+| Order Matching | T+0 | `createJob()` | Step 5 |
+| Trade Confirmation & Affirmation | T+0 → T+1 | `setBudget()` | Step 6 |
+| Clearing — CCP novation + margin call | T+1 | `approve()` + `fund()` | Steps 7–8 |
+| Delivery Obligation (confirm to CCP) | T+1 → T+2 | `submit(deliverableHash)` | Step 9 |
+| Settlement — DVP | T+2 (T+1 post SEC 2024 rule) | `complete()` — atomic on-chain | Step 10 |
+| Reconciliation | T+2 → T+3 | `getJob()` + balance check | Steps 11–12 |
+
+### Where the biggest difference lies: Clearing (Steps 7–8)
+
+In traditional markets, clearing is handled by a Central Counterparty (CCP) such as DTCC. After a trade is matched at T+0, the CCP novates the trade and issues margin calls processed in **overnight batch windows** — creating a counterparty risk exposure window of up to 24 hours before collateral is actually locked.
+
+On-chain, the smart contract *is* the CCP. `approve()` + `fund()` lock collateral in a single transaction sequence — there is no overnight window and no bilateral counterparty risk between execution and clearing.
+
+### Time saved
+
+| | Traditional | On-Chain |
+|---|---|---|
+| Execution → Clearing | ~24 hours (T+0 to T+1) | Seconds |
+| Clearing → DVP Settlement | ~24 hours (T+1 to T+2) | Seconds |
+| **Total (execution to settlement)** | **1–2 business days** | **Minutes** |
+
+The clearing-to-settlement gap is eliminated entirely. Every step from order matching (Step 5) through final DVP (Step 10) executes sequentially on-chain within a single session, with per-transaction finality.
+
 ## Features
 
 - Trade execution (buyer & seller agreement)
