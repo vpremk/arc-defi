@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/vamsi/opensource/arc-defi-sample"
+    ],
+    "allow": [
+      "Read(//Users/vamsi/opensource/**)"
+    ]
+  }
+}
