@@ -150,6 +150,103 @@ The cost savings above are real, but so are the adoption barriers. These are the
 | 6 | **MEV and front-running** | A pending `createJob()` or `fund()` on a public mempool reveals trade direction, size, and price before confirmation. Validators and searchers can front-run or sandwich the transaction, repricing the trade against the initiating party. | ARC operates a **permissioned validator set** of institutional participants — not anonymous miners or public stakers. Transactions are submitted through Circle's private RPC endpoint, bypassing any public mempool entirely. Block production is controlled, making MEV extraction structurally impossible without explicit collusion among the whitelisted validators. |
 | 7 | **Custody and key management** | SEC Rule 15c3-3 and the Investment Advisers Act impose strict custody requirements. Loss or compromise of the Circle entity secret results in permanent asset loss — no SIPC protection, no legal recourse equivalent to a qualified custodian. | Circle's Developer-Controlled Wallets use **MPC (Multi-Party Computation)** key management backed by HSMs (Hardware Security Modules), distributing key shards so that no single point of compromise is sufficient. Circle is a licensed money transmitter and is pursuing a US federal bank charter, positioning it as a **qualified custodian** under SEC rules — giving institutional clients the regulatory custody coverage required by the Investment Advisers Act. |
 
+## Low-Impact Adoption Strategy: Traditional Exchange → ARC Settlement
+
+A "big bang" migration from DTCC to on-chain settlement is neither realistic nor safe. The strategy below is designed so that an exchange adds ARC as a parallel settlement rail and shifts volume incrementally — each phase producing measurable savings with no risk to the existing participant base.
+
+### Guiding principles
+
+- **No forced migration** — existing T+1/DTCC settlement continues throughout every phase
+- **Start with net-new** — onboard assets that have no legacy settlement infrastructure first
+- **Opt-in before mandate** — participants choose to use ARC; it is never imposed
+- **API-first integration** — ARC bolts onto the exchange's existing OMS/post-trade stack via Circle's Developer-Controlled Wallets API without replacing it
+
+---
+
+### Phase 1 — Shadow mode (0% volume shift, 0 participant impact)
+
+**What happens:** The exchange runs ARC settlement in parallel with DTCC for a subset of trades — comparing results, timing, and cost — without routing any real settlement obligation through ARC. Participants see nothing different.
+
+**What to build:**
+- Connect exchange's trade feed to `createJob()` / `fund()` / `complete()` on ARC testnet for every matched trade
+- Log on-chain settlement time vs. DTCC T+1 confirmation time side-by-side
+- Validate that `getJob()` state matches DTCC confirmed status for every trade
+
+**Circle/ARC tools used:** Developer-Controlled Wallets API, ARC Testnet RPC, `arcscan` for audit trail
+
+**Exit criterion:** 30 consecutive trading days with zero state divergence between ARC shadow log and DTCC settlement record.
+
+---
+
+### Phase 2 — Tokenised new listings (≈5–10% volume)
+
+**What happens:** New securities listed on the exchange are issued as tokenised assets on ARC from day one. They have no pre-existing DTCC settlement infrastructure, so there is nothing to migrate. Buyers and sellers of these instruments settle entirely on-chain via DVP.
+
+**What to build:**
+- Issue new listings as ERC-20 (fungible) or ERC-721 (NFT for unique instruments) on ARC
+- Provision participant wallets through Circle's Developer-Controlled Wallets API — participants interact through existing order management interfaces; the wallet layer is invisible
+- Map `createJob()` → order match, `fund()` → clearing, `complete()` → DVP settlement
+
+**Regulatory consideration:** File with the SEC under the existing ATS (Alternative Trading System) exemption or seek a no-action letter for tokenised securities settlement. Circle's regulatory team has established relationships with NYDFS and the SEC to support this process.
+
+**Exit criterion:** 6 months of clean settlement on tokenised listings with no failed DVPs and participant satisfaction scores matching or exceeding DTCC SLAs.
+
+---
+
+### Phase 3 — Block trade opt-in for institutional counterparties (≈15–25% volume)
+
+**What happens:** Large negotiated block trades (e.g. >$50M notional) between two institutions are offered an opt-in ARC settlement path. Both counterparties must consent. The trade is bilateral, so there is no multilateral netting impact (Phase 1 identified this as the key structural risk).
+
+**What to build:**
+- Add an "ARC Settlement" toggle to the block trade negotiation UI
+- When both sides opt in, route through `createJob()` → `setBudget()` → `approve()` → `fund()` → `submit()` → `complete()` within a single session
+- Maintain a DTCC fallback: if either side's `fund()` fails within a timeout, revert and fall back to standard T+1
+
+**Savings unlocked:** The full $66,667 per $250M trade modelled in the BlackRock/Goldman example applies here. At 20 such block trades per month, that is ≈$1.3M/month in participant cost savings — a tangible incentive for opt-in.
+
+**Exit criterion:** 80% of eligible block trade counterparties actively choosing ARC settlement within 12 months.
+
+---
+
+### Phase 4 — Default settlement for eligible securities (≈50–60% volume)
+
+**What happens:** ARC becomes the default settlement rail for all tokenised assets and all securities where both counterparties have active Circle wallets provisioned. DTCC remains the fallback for participants who have not yet onboarded.
+
+**What to build:**
+- Implement on-chain multilateral netting contract: aggregate all bilateral trades intra-day per security, net positions, submit a single gross settlement per participant per day — replicating NSCC netting and recovering the netting efficiency identified as a Phase 1 risk
+- Automate wallet provisioning at account opening so every new participant gets a Circle wallet by default
+
+**Regulatory milestone required:** Exchange must obtain recognition from the SEC that ARC settlement constitutes legal settlement finality (UCC Article 12 framework) before mandating this phase.
+
+**Exit criterion:** Net settlement volumes on ARC match or beat DTCC netting efficiency (≥90% reduction in gross obligations).
+
+---
+
+### Phase 5 — Full migration, DTCC as backstop only (≈95–100% volume)
+
+**What happens:** ARC handles all settlement. DTCC connectivity is maintained purely as a regulatory backstop and for cross-market interoperability (e.g. trades that cross into non-ARC venues). The overnight batch cycle is eliminated.
+
+**Outcome at scale:**
+
+| Metric | Traditional (DTCC) | ARC (Phase 5) |
+|---|---|---|
+| Settlement window | T+1 (24 hrs) | Minutes |
+| Failed trade rate | ≈0.3% (industry avg) | Near zero (atomic DVP) |
+| Capital locked in settlement pipeline | ≈2× daily volume | ≈0 |
+| CCP clearing fee per $250M trade | $2,600 | $0 |
+| Participant capital cost per $250M trade | $66,677 | $10 |
+
+---
+
+### Migration risk controls at every phase
+
+| Control | Mechanism |
+|---|---|
+| Fallback to DTCC | Every on-chain flow has a timeout; unresolved trades revert to T+1 automatically |
+| Admin intervention | `admin` key on ARC contracts allows Circle + exchange to cancel and re-route within the dispute window |
+| Participant opt-out | Any participant can revert to DTCC settlement at any phase without penalty |
+| Regulatory checkpoint | Each phase requires explicit sign-off from exchange compliance and legal before volume is shifted |
+
 ## Features
 
 - Trade execution (buyer & seller agreement)
@@ -209,9 +306,12 @@ The cost savings above are real, but so are the adoption barriers. These are the
 
 ## Usage
 
-Run the script corresponding to your deployed contract:
-- For ERC-20 assets: `python collateralized_trade.py`
-- For ERC-721 NFT assets: `python collateralized_trade_nft.py`
+Run the main script:
+```bash
+python collateralized_trade.py
+```
+
+This runs the full ERC-8183 Agentic Commerce trade lifecycle (Steps 1–12). NFT collateral operations (`create_nft_trade`, `adjust_nft_margin`, `execute_nft_trade`, `substitute_nft_collateral`) are defined in the same file and can be called directly after completing the main flow.
 
 The script will:
 - Create buyer and seller wallets
