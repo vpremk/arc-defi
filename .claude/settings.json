@@ -1,10 +1,13 @@
 {
   "permissions": {
+    "allow": [
+      "Read(//Users/vamsi/opensource/**)",
+      "Bash(grep -r \"if __name__\" *.py)",
+      "Bash(grep -l \"if __name__\" *.py)",
+      "Bash(wc -l /Users/vamsi/opensource/arc-defi-sample/*.py)"
+    ],
     "additionalDirectories": [
       "/Users/vamsi/opensource/arc-defi-sample"
-    ],
-    "allow": [
-      "Read(//Users/vamsi/opensource/**)"
     ]
   }
 }

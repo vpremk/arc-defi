@@ -1,7 +1,9 @@
 site_name: Collateralized Trade on Circle ARC
 site_description: DeFi-style trade lifecycle on Circle ARC Testnet using ERC-8183 and ERC-721
 
-docs_dir: docs
+docs_dir: .
+nav:
+  - Home: README.md
 
 theme:
   name: material
@@ -15,9 +17,6 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.snippets:
-      base_path: ['.']
-      check_paths: true
   - admonition
   - pymdownx.details
   - pymdownx.highlight:

@@ -247,6 +247,100 @@ A "big bang" migration from DTCC to on-chain settlement is neither realistic nor
 | Participant opt-out | Any participant can revert to DTCC settlement at any phase without penalty |
 | Regulatory checkpoint | Each phase requires explicit sign-off from exchange compliance and legal before volume is shifted |
 
+## Recommendations for Exchanges
+
+Four questions every exchange legal, technology, and operations team raises when evaluating on-chain settlement — with specific answers grounded in how ARC and this implementation work.
+
+---
+
+### 1. Where exactly do you remove or replace the role of a clearinghouse?
+
+A clearinghouse (CCP) performs six distinct functions. They are not all equally replaceable on day one.
+
+| CCP Function | Replaceable on ARC? | How |
+|---|---|---|
+| **Novation** — CCP becomes counterparty to both sides | Partially | The smart contract enforces bilateral obligations atomically. There is no novation (both parties' identities remain visible), but counterparty default risk is eliminated by requiring collateral lock-up before settlement proceeds. |
+| **Multilateral netting** — reduces gross settlement by ≈95% | No (by default) | Requires a separate netting smart contract deployed on ARC that aggregates intra-day bilateral trades per security, nets positions, and submits a single gross settlement per participant per day. This is a Phase 4 build. |
+| **Margin/collateral management** — initial margin, variation margin | Yes — directly | `approve()` + `fund()` in this implementation *are* the margin posting mechanism. USDC locked in contract escrow is the margin account. No CCP intermediary required. |
+| **Risk mutualization** — guaranty fund backstops member defaults | No (by default) | No guaranty pool equivalent exists on ARC today. Recommendation: deploy a Circle-governed guaranty pool smart contract funded by clearing member contributions — a direct on-chain analogue to NSCC's guaranty fund. |
+| **Settlement finality** — legal irrevocability of transfer | Technically yes, legally not yet | Blockchain finality is technically stronger than DTCC finality (irreversible vs. book-entry). Legal recognition under UCC Article 12 (enacted 2023) is the regulatory milestone needed to close this gap. |
+| **Default management** — waterfall for insolvent member | No (by default) | The `admin` key provides intervention capability, but there is no formal default waterfall (own resources → margin → guaranty fund → assessment). This must be explicitly designed for Phase 4–5. |
+
+**Bottom line:** Remove the CCP's novation and margin functions immediately — the smart contract replaces them directly. Netting, risk mutualization, and default management require additional contracts built on top of ARC before the CCP can be fully decommissioned.
+
+---
+
+### 2. How would USDC interact with custodians and prime brokers?
+
+Three specific integration points each require a different answer.
+
+**USD → USDC conversion at the prime broker layer**
+Prime brokers currently hold client cash in money market funds, repos, and demand deposit accounts, funding DTC settlement via Fedwire. To use USDC, they need to offer USDC accounts alongside USD accounts. Circle's Developer-Controlled Wallets API is the integration point: the prime broker becomes a Circle API partner, provisions a wallet per client, and handles USD ↔ USDC conversion internally. This requires either a money transmitter licence or a direct Circle partnership agreement — both of which Circle actively supports for institutional onboarding.
+
+**Custodians recognising on-chain settlement as the record of title**
+Today, custodians read DTC position files (delivered nightly) as the authoritative record of client holdings. In an ARC world, the custodian needs to read ARC's blockchain state via the RPC endpoint as the equivalent authoritative source. Practically: custodians (BNY Mellon, State Street, JPMorgan Custody) integrate ARC's `getJob()` and on-chain balance queries into their reconciliation systems. Circle's institutional RPC access and the publicly auditable ledger make this straightforward technically; the barrier is internal systems integration, not infrastructure availability.
+
+**Prime brokerage functions: margin lending, securities lending, rehypothecation**
+- *Margin lending*: Prime brokers lend USDC against tokenised securities as collateral. The smart contract `adjustMargin()` function in this repo handles variation margin calls. Initial margin lending requires the prime broker to hold USDC liquidity — a treasury function, not a technical one.
+- *Securities lending*: Stock borrow/loan moves on-chain as ERC-721 (for unique instruments) or ERC-20 transfers with time-locked return obligations. The `substituteCollateral()` function in this repo models how collateral can be swapped — the same mechanism applies to lending returns.
+- *Rehypothecation*: Prime brokers rehypothecate client assets by re-pledging them against their own obligations. On ARC, this requires explicit smart contract logic granting the prime broker a limited transfer right on client-held tokens — a permissions model, not a protocol limitation.
+
+---
+
+### 3. What breaks if we try to use USDC in today's T+1 equity markets?
+
+Seven specific rules and systems break before a single trade settles. This is why Phase 2 of the adoption strategy targets net-new tokenised securities — not existing equities.
+
+| What breaks | Why |
+|---|---|
+| **Regulation T (12 CFR 220)** | Reg T requires payment in "good funds" — currently defined as bank wire or cash equivalents. The SEC has not issued guidance recognising USDC as good funds. Brokers cannot legally accept USDC for marginable securities without a no-action letter. |
+| **SEC Rule 15c3-3 (Customer Protection Rule)** | Broker-dealers must hold customer funds in a special reserve bank account. Qualifying assets are explicitly enumerated: cash, US government securities, etc. USDC does not qualify. Holding client USDC as a reserve asset puts the broker in violation. |
+| **DTCC/DTC settlement infrastructure** | DTC settles the cash leg in USD only via book-entry. There is no USDC settlement rail at DTC. Even if both counterparties agree to settle in USDC, DTC still requires a USD delivery — you cannot substitute USDC on the existing rail without building a parallel one. |
+| **FINRA Rule 4210 (Margin Requirements)** | Margin calculations, portfolio margin, and day-trading margin requirements are all denominated in USD. USDC introduces a basis (≠1 USD, even transiently) that creates compliance questions in margin deficiency calculations. |
+| **Fedwire interoperability** | Prime brokers fund DTC accounts via Fedwire. USDC cannot travel through Fedwire. Moving to USDC requires parallel liquidity infrastructure completely separate from the existing intraday credit and funding mechanisms. |
+| **Corporate actions (dividends, splits, rights)** | Issuers pay dividends in USD through DTC's Dividend Payment Mechanism. Tokenised securities need a USDC dividend distribution mechanism that does not yet exist — or a USD-to-USDC conversion layer at the point of payment. |
+| **Fails and buy-in rules (SEC Rule 204)** | Rule 204 mandates that fails be closed via buy-in within 2 settlement days. The buy-in process uses USD, not USDC, and is administered by the prime broker and DTC jointly. A USDC settlement rail has no legal hook into the Rule 204 close-out process. |
+
+**The correct interpretation:** these are not permanent blockers — they are rules written for a USD-only world. Each has a regulatory path (no-action letter, rulemaking, guidance). The practical recommendation is to avoid the existing T+1 rail entirely and build the USDC settlement path on ARC for instruments that are born tokenised, where none of these rules apply by default.
+
+---
+
+### 4. How do you handle fails, reversals, or disputes in an irreversible system?
+
+Each scenario has a distinct answer because the cause and timing differ.
+
+**Fails — pre-settlement failure to deliver**
+
+In traditional markets, a fail occurs when a seller cannot deliver shares by T+1. DTCC carries the fail forward (with penalties) until a buy-in is executed. On ARC, a fail cannot happen in the same way: `fund()` requires the seller's wallet to hold the asset before the transaction is confirmed. If the seller cannot fund, the transaction reverts atomically — the buyer's USDC is never moved. The fail is prevented at the protocol level rather than managed after the fact.
+
+What replaces the buy-in: if the seller's wallet is consistently unable to fund (e.g. the tokenised asset was never delivered to them from the issuer), the exchange's `admin` key can trigger a compensating `createJob()` in the opposite direction at the same price — an on-chain buy-in — funded from a Circle-governed default pool.
+
+**Reversals — bust trades and clearly erroneous executions**
+
+Once `complete()` is confirmed, the original transaction is irreversible at the protocol level. The mechanism for reversal is a **compensating transaction**: the exchange deploys a new `createJob()` in the opposite direction (seller becomes buyer, buyer becomes seller) at the original price, which when `complete()`-d returns both parties to their pre-trade positions economically. This is analogous to how DTC handles busts today — it does not literally reverse the book entry, it creates an offsetting one.
+
+The key design addition needed: a **time-locked release window** after `complete()`. Concretely: USDC moves from buyer's wallet into contract escrow at `fund()`, and from escrow to seller's wallet only after a configurable hold period (e.g., 4 hours). During that window, the `admin` key can freeze the escrow and initiate the compensating transaction. After the window, the release is automatic. This adds at most 4 hours to settlement — still far inside T+1.
+
+**Disputes — post-settlement disagreements**
+
+On-chain state is the authoritative record. `getJob()` returns an immutable struct with all trade parameters, both wallet addresses, the amount, and the timestamp — stronger audit evidence than DTC's paper confirmation in most dispute contexts.
+
+Escalation path for disputes on ARC:
+
+```
+On-chain evidence (getJob() output)
+        ↓
+Circle admin governance review (admin key, time-locked escrow)
+        ↓
+Exchange internal dispute committee
+        ↓
+FINRA arbitration (off-chain, using on-chain record as primary evidence)
+        ↓
+Courts (UCC Article 12 digital asset transfer rules)
+```
+
+The practical recommendation: add a `raiseDispute(jobId)` function to the smart contract callable by either counterparty within the hold window. Raising a dispute freezes the escrow and routes the job ID to the exchange's compliance queue. This replicates DTC's "don't know" (DK) mechanism — a formal signal that a party contests the settlement — without requiring any off-chain communication before the funds freeze.
+
 ## Features
 
 - Trade execution (buyer & seller agreement)
